@@ -1,7 +1,7 @@
 // auto-agent-bz/main.js
 // 传奇霸主自动化脚本 - AutoJS版本
-// 使用控件查找 + 点击回放方式
-// Version: 1.0.2 (修复参数名冲突)
+// 使用控件查找 + 悬浮日志面板
+// Version: 1.1.0
 
 'use strict';
 
@@ -16,7 +16,6 @@ const CONFIG = {
   // 战斗设置
   combat: {
     enabled: true,
-    // 检测间隔(ms)
     checkInterval: 1500,
   },
 
@@ -32,11 +31,16 @@ const CONFIG = {
     interval: 60000,
   },
 
-  // 背包
-  bag: {
-    autoOrganize: true,
-    autoSell: false,
-    autoStorage: false,
+  // 悬浮窗设置
+  floaty: {
+    // 位置
+    x: 10,
+    y: 100,
+    // 透明度
+    alpha: 0.85,
+    // 大小
+    width: 300,
+    height: 200,
   }
 };
 
@@ -44,7 +48,6 @@ const CONFIG = {
 let STATE = {
   running: false,
   answering: false,
-  inCombat: false,
   stats: {
     startTime: 0,
     kills: 0,
@@ -52,89 +55,218 @@ let STATE = {
   }
 };
 
-// ========== 日志 ==========
-const Log = {
-  d(tag, msg) { if (CONFIG.logLevel === 'debug') console.log(`[${dateStr()}][${tag}] ${msg}`); },
-  i(tag, msg) { console.log(`[${dateStr()}][${tag}] ${msg}`); },
-  w(tag, msg) { console.warn(`[${dateStr()}][${tag}] ${msg}`); },
-  e(tag, msg) { console.error(`[${dateStr()}][${tag}] ${msg}`); }
+// ========== 悬浮日志窗口 ==========
+let floatyWindow = null;
+let logLines = [];
+const MAX_LOG_LINES = 8;
+
+const FloatyUI = {
+  /**
+   * 创建悬浮窗
+   */
+  create() {
+    // 创建悬浮窗口
+    floatyWindow = floaty.window(
+      <frame bg="#88000000" padding="5">
+        <vertical>
+          {/* 标题栏 */}
+          <linear gravity="center" bg="#AA000000" padding="3">
+            <text text="传奇霸主助手" textColor="#FFD700" textSize="13" />
+            <text id="status" text=" ⏸ 已停止" textColor="#AAAAAA" textSize="11" />
+          </linear>
+
+          {/* 日志区域 */}
+          <scroll id="logScroll" height="150">
+            <vertical id="logContainer">
+              <text id="log1" text="" textColor="#00FF00" textSize="10" line1="true" />
+              <text id="log2" text="" textColor="#00FF00" textSize="10" line1="true" />
+              <text id="log3" text="" textColor="#00FF00" textSize="10" line1="true" />
+              <text id="log4" text="" textColor="#00FF00" textSize="10" line1="true" />
+              <text id="log5" text="" textColor="#00FF00" textSize="10" line1="true" />
+              <text id="log6" text="" textColor="#00FF00" textSize="10" line1="true" />
+              <text id="log7" text="" textColor="#00FF00" textSize="10" line1="true" />
+              <text id="log8" text="" textColor="#00FF00" textSize="10" line1="true" />
+            </vertical>
+          </scroll>
+
+          {/* 统计信息 */}
+          <linear gravity="center" bg="#AA333333" padding="2">
+            <text id="stats" text="击杀: 0 | 拾取: 0" textColor="#FFFFFF" textSize="10" />
+          </linear>
+
+          {/* 控制按钮 */}
+          <linear gravity="center" padding="3">
+            <button id="btnStop" text="停止" textSize="11" h="30" w="70" />
+            <button id="btnDebug" text="调试" textSize="11" h="30" w="50" />
+          </linear>
+        </vertical>
+      </frame>
+    );
+
+    // 设置位置
+    floatyWindow.setPosition(CONFIG.floaty.x, CONFIG.floaty.y);
+
+    // 设置可拖拽
+    floatyWindow.setTouchable(false);
+
+    // 按钮事件
+    floatyWindow.btnStop.click(() => {
+      Main.stop();
+    });
+
+    floatyWindow.btnDebug.click(() => {
+      UI.showCurrentScreenText();
+    });
+
+    this.log('悬浮窗已创建');
+    return floatyWindow;
+  },
+
+  /**
+   * 添加日志行
+   */
+  log(msg) {
+    if (!floatyWindow) return;
+
+    // 添加到数组
+    logLines.push(msg);
+    if (logLines.length > MAX_LOG_LINES) {
+      logLines.shift();
+    }
+
+    // 更新显示
+    for (let i = 0; i < MAX_LOG_LINES; i++) {
+      let lineNum = i + 1;
+      let textView = floatyWindow['log' + lineNum];
+      if (textView && logLines[i]) {
+        textView.setText(logLines[i]);
+      }
+    }
+
+    // 滚动到底部
+    try {
+      floatyWindow.logScroll.scrollToBottom();
+    } catch (e) {}
+  },
+
+  /**
+   * 更新状态
+   */
+  updateStatus(status, color) {
+    if (!floatyWindow) return;
+    color = color || '#AAAAAA';
+    floatyWindow.status.setText(' ' + status);
+    floatyWindow.status.setTextColor(colors.parseColor(color));
+  },
+
+  /**
+   * 更新统计
+   */
+  updateStats() {
+    if (!floatyWindow) return;
+    let s = '击杀: ' + STATE.stats.kills + ' | 拾取: ' + STATE.stats.picks;
+    floatyWindow.stats.setText(s);
+  },
+
+  /**
+   * 关闭
+   */
+  close() {
+    if (floatyWindow) {
+      floatyWindow.close();
+      floatyWindow = null;
+    }
+  }
 };
 
-function dateStr() {
-  return new Date().toLocaleTimeString('zh-CN', { hour12: false });
-}
+// ========== 日志 (同时输出到控制台和悬浮窗) ==========
+const Log = {
+  d(tag, msg) {
+    if (CONFIG.logLevel === 'debug') {
+      console.log('[' + tag + '] ' + msg);
+      FloatyUI.log('[' + tag + '] ' + msg);
+    }
+  },
+  i(tag, msg) {
+    console.log('[' + tag + '] ' + msg);
+    FloatyUI.log('[' + tag + '] ' + msg);
+  },
+  w(tag, msg) {
+    console.warn('[' + tag + '] ' + msg);
+    FloatyUI.log('[WARN][' + tag + '] ' + msg);
+  },
+  e(tag, msg) {
+    console.error('[' + tag + '] ' + msg);
+    FloatyUI.log('[ERR][' + tag + '] ' + msg);
+  }
+};
 
 // ========== UI控件查找 ==========
 const UI = {
   /**
-   * 等待并点击包含指定文字的控件
-   * @param {string} str 控件文字(支持contains)
-   * @param {number} timeout 超时时间
-   * @returns {boolean} 是否成功
+   * 点击包含指定文字的控件
    */
-  clickText(str, timeout = 5000) {
+  clickText(str, timeout) {
     try {
+      timeout = timeout || 5000;
       let el = text(str).clickable(true).findOne(timeout);
       if (el) {
         el.click();
-        Log.d('UI', `点击文本: ${str}`);
+        Log.d('UI', '点击: ' + str);
         return true;
       }
-      // 尝试不完全匹配
       el = textContains(str).clickable(true).findOne(timeout);
       if (el) {
         el.click();
-        Log.d('UI', `点击文本(含): ${str}`);
+        Log.d('UI', '点击(含): ' + str);
         return true;
       }
-      Log.w('UI', `未找到控件: ${str}`);
+      Log.w('UI', '未找到: ' + str);
       return false;
     } catch (e) {
-      Log.e('UI', `点击文本失败: ${str}, ${e}`);
+      Log.e('UI', '点击失败: ' + str);
       return false;
     }
   },
 
   /**
-   * 点击描述包含指定文字的控件
+   * 点击描述
    */
-  clickDesc(str, timeout = 5000) {
+  clickDesc(str, timeout) {
     try {
+      timeout = timeout || 5000;
       let el = desc(str).clickable(true).findOne(timeout);
       if (el) {
         el.click();
-        Log.d('UI', `点击描述: ${str}`);
         return true;
       }
       el = descContains(str).clickable(true).findOne(timeout);
       if (el) {
         el.click();
-        Log.d('UI', `点击描述(含): ${str}`);
         return true;
       }
-      Log.w('UI', `未找到描述: ${str}`);
       return false;
     } catch (e) {
-      Log.e('UI', `点击描述失败: ${str}, ${e}`);
       return false;
     }
   },
 
   /**
-   * 在指定区域点击
+   * 点击坐标区域中心
    */
   clickBounds(x1, y1, x2, y2) {
     let cx = Math.floor((x1 + x2) / 2);
     let cy = Math.floor((y1 + y2) / 2);
     click(cx, cy);
-    Log.d('UI', `点击坐标: (${cx}, ${cy})`);
+    Log.d('UI', '点击坐标: (' + cx + ', ' + cy + ')');
   },
 
   /**
-   * 查找是否存在指定文字
+   * 检测是否存在文字
    */
-  existsText(str, timeout = 2000) {
+  existsText(str, timeout) {
     try {
+      timeout = timeout || 2000;
       return text(str).exists(timeout) || textContains(str).exists(timeout);
     } catch (e) {
       return false;
@@ -142,34 +274,19 @@ const UI = {
   },
 
   /**
-   * 查找是否存在指定描述
-   */
-  existsDesc(str, timeout = 2000) {
-    try {
-      return desc(str).exists(timeout) || descContains(str).exists(timeout);
-    } catch (e) {
-      return false;
-    }
-  },
-
-  /**
-   * 关闭弹窗 - 查找关闭按钮
+   * 关闭弹窗
    */
   closeDialog() {
-    // 尝试多种关闭方式
-    if (this.clickText('×')) return true;
-    if (this.clickText('关闭')) return true;
-    if (this.clickText('X')) return true;
-    if (this.clickDesc('关闭')) return true;
-    // 尝试点击右上角
+    this.clickText('×');
+    this.clickText('关闭');
+    this.clickText('X');
+    this.clickDesc('关闭');
     let w = device.width;
     this.clickBounds(w - 80, 50, w - 30, 100);
-    sleep(200);
-    return false;
   },
 
   /**
-   * 获取当前屏幕所有文本(调试用)
+   * 获取屏幕所有文本(调试用)
    */
   getAllText() {
     let texts = [];
@@ -177,18 +294,26 @@ const UI = {
       let els = text().clickable(false).find();
       els.forEach(function(el) {
         let t = el.text();
-        let d = el.desc();
-        if (t && t.length > 0) texts.push(t);
-        if (d && d.length > 0) texts.push('[' + d + ']');
+        if (t && t.length > 0 && t.length < 50) {
+          texts.push(t);
+        }
       });
     } catch (e) {}
-    return texts.join(', ');
+    return texts.slice(0, 20).join(' | ');
+  },
+
+  /**
+   * 显示当前屏幕文本到日志
+   */
+  showCurrentScreenText() {
+    let txt = this.getAllText();
+    Log.i('Debug', '屏幕: ' + txt);
   }
 };
 
 // ========== 反挂机答题 ==========
 const AntiAfk = {
-  // 诗词库 (从油猴脚本移植)
+  // 诗词库
   POETRY_DB: {
     '春眠不觉晓': '处处闻啼鸟',
     '夜来风雨声': '花落知多少',
@@ -203,10 +328,9 @@ const AntiAfk = {
   },
 
   /**
-   * 检测是否有答题框
+   * 检测答题框
    */
   checkDialog() {
-    // 答题框特征文字
     if (UI.existsText('答题')) return true;
     if (UI.existsText('验证')) return true;
     if (UI.existsText('第') && UI.existsText('行')) return true;
@@ -215,7 +339,7 @@ const AntiAfk = {
   },
 
   /**
-   * 获取题目中的数字
+   * 解析中文数字
    */
   parseChineseNum(str) {
     var map = { '零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
@@ -232,32 +356,26 @@ const AntiAfk = {
     var question = '';
     var answer = '';
 
-    // 尝试获取题目文字
     try {
       var qEl = textContains('第').findOne(3000);
-      if (qEl) {
-        question = qEl.text();
-      }
+      if (qEl) question = qEl.text();
     } catch (e) {
-      Log.e('AntiAfk', '获取题目失败: ' + e);
+      Log.e('AntiAfk', '获取题目失败');
       return;
     }
 
-    Log.i('AntiAfk', '识别到题目: ' + question);
+    Log.i('AntiAfk', '题目: ' + question);
 
     var m;
 
-    // 唐诗找字: 第X行第Y个字
+    // 唐诗找字
     m = question.match(/第(.)行第(.)个字/);
     if (m) {
-      var line = this.parseChineseNum(m[1]);
-      var pos = this.parseChineseNum(m[2]);
-      Log.i('AntiAfk', '诗词: 第' + line + '行第' + pos + '个字');
-      // 简化处理，返回空让用户自己答
+      Log.i('AntiAfk', '诗词题，需要手动回答');
       answer = '';
     }
 
-    // 乘法: A乘B等于几
+    // 乘法
     m = question.match(/(.)乘(.)等/);
     if (m) {
       var a = this.parseChineseNum(m[1]);
@@ -275,31 +393,26 @@ const AntiAfk = {
       Log.i('AntiAfk', '加法: ' + a2 + '+' + b2 + '=' + answer);
     }
 
-    // 输入答案
     if (answer) {
       try {
-        // 找输入框
         var input = className('EditText').findOne(2000);
         if (input) {
           input.setText(answer);
           sleep(300);
         }
-        // 点击确定
         UI.clickText('确定');
         UI.clickText('确认');
-        sleep(500);
       } catch (e) {
-        Log.e('AntiAfk', '输入答案失败: ' + e);
+        Log.e('AntiAfk', '输入失败');
       }
     } else {
-      Log.w('AntiAfk', '无法解答，请手动答题');
-      // 震动提示用户
+      Log.w('AntiAfk', '请手动答题!');
       device.vibrate(500);
     }
   },
 
   /**
-   * 执行反挂机检测
+   * 执行
    */
   execute() {
     if (!CONFIG.antiAfk.enabled) return;
@@ -307,7 +420,7 @@ const AntiAfk = {
 
     if (this.checkDialog()) {
       STATE.answering = true;
-      Log.i('AntiAfk', '检测到答题框，开始答题');
+      Log.i('AntiAfk', '检测到答题!');
       this.solve();
       STATE.answering = false;
     }
@@ -317,10 +430,9 @@ const AntiAfk = {
 // ========== 战斗模块 ==========
 const Combat = {
   /**
-   * 检测是否在战斗中
+   * 检测战斗状态
    */
   checkCombat() {
-    // 检查是否有战斗相关UI
     if (UI.existsText('自动')) return true;
     if (UI.existsText('战斗中')) return true;
     if (UI.existsText('攻击')) return true;
@@ -331,12 +443,10 @@ const Combat = {
    * 开启自动战斗
    */
   enableAutoFight() {
-    // 查找并点击自动战斗按钮
     if (UI.clickText('自动')) {
       sleep(500);
       return true;
     }
-    // 尝试点击开关按钮
     if (UI.clickText('开')) {
       sleep(300);
       return true;
@@ -345,10 +455,9 @@ const Combat = {
   },
 
   /**
-   * 检测是否有可拾取的物品
+   * 检测拾取
    */
   checkLoot() {
-    // 拾取物品的特征
     if (UI.existsText('拾取')) return true;
     if (UI.existsText('金币')) return true;
     if (UI.existsText('获得')) return true;
@@ -356,16 +465,18 @@ const Combat = {
   },
 
   /**
-   * 拾取物品
+   * 拾取
    */
   pickup() {
     UI.clickText('拾取');
     UI.clickText('一键拾取');
+    STATE.stats.picks++;
+    FloatyUI.updateStats();
     sleep(200);
   },
 
   /**
-   * 战斗主循环
+   * 战斗循环
    */
   loop() {
     while (STATE.running) {
@@ -374,15 +485,12 @@ const Combat = {
         continue;
       }
 
-      // 检测答题
       AntiAfk.execute();
 
-      // 检测拾取
       if (this.checkLoot()) {
         this.pickup();
       }
 
-      // 确保自动战斗开启
       if (!this.checkCombat()) {
         this.enableAutoFight();
       }
@@ -394,58 +502,42 @@ const Combat = {
 
 // ========== 日常任务 ==========
 const Daily = {
-  /**
-   * 执行日常任务
-   */
   execute() {
     if (!CONFIG.daily.enabled) return;
 
-    Log.i('Daily', '执行日常任务');
+    Log.i('Daily', '执行日常...');
 
-    // 打开日常界面
     if (UI.clickText('日常')) {
       sleep(500);
     }
 
-    // 领取奖励
     UI.clickText('领取');
     sleep(300);
     UI.clickText('确定');
     sleep(200);
-
-    // 关闭弹窗
     UI.closeDialog();
 
-    Log.i('Daily', '日常任务完成');
+    Log.i('Daily', '日常完成');
   }
 };
 
 // ========== 主控制 ==========
 const Main = {
-  /**
-   * 初始化
-   */
-  init: function() {
-    Log.i('Main', '传奇霸主自动化 v1.0.2 启动');
+  init() {
+    Log.i('Main', '传奇霸主助手 v1.1.0 启动');
     Log.i('Main', '屏幕: ' + device.width + 'x' + device.height);
 
-    // 请求截图权限
     if (!requestScreenCapture()) {
-      Log.e('Main', '截图权限失败');
+      Log.e('Main', '需要截图权限!');
       toast('请授予截图权限');
       return false;
     }
 
-    // 启用无障碍服务
     auto();
-    Log.i('Main', '无障碍服务已启用');
     return true;
   },
 
-  /**
-   * 启动自动化
-   */
-  start: function() {
+  start() {
     if (STATE.running) {
       Log.w('Main', '已在运行');
       return;
@@ -453,17 +545,19 @@ const Main = {
 
     if (!this.init()) return;
 
+    // 创建悬浮窗
+    FloatyUI.create();
+
     STATE.running = true;
     STATE.stats.startTime = Date.now();
 
-    Log.i('Main', '自动化已启动');
+    FloatyUI.updateStatus('运行中', '#00FF00');
 
-    // 启动战斗线程
+    // 启动线程
     threads.start(function() {
       Combat.loop();
     });
 
-    // 启动日常任务线程
     threads.start(function() {
       while (STATE.running) {
         Daily.execute();
@@ -471,46 +565,39 @@ const Main = {
       }
     });
 
-    // 显示调试信息
-    this.showDebug();
+    Log.i('Main', '已启动!');
+
+    // 震动提示
+    device.vibrate(200);
   },
 
-  /**
-   * 停止自动化
-   */
-  stop: function() {
+  stop() {
     if (!STATE.running) return;
 
     STATE.running = false;
+    FloatyUI.updateStatus('已停止', '#FF6666');
+
     var duration = Date.now() - STATE.stats.startTime;
     var mins = Math.floor(duration / 60000);
 
-    Log.i('Main', '自动化已停止');
-    Log.i('Main', '运行时长: ' + mins + '分钟');
-    Log.i('Main', '击杀: ' + STATE.stats.kills + ', 拾取: ' + STATE.stats.picks);
-  },
+    Log.i('Main', '已停止');
+    Log.i('Main', '时长: ' + mins + '分钟');
 
-  /**
-   * 显示当前屏幕文本(调试用)
-   */
-  showDebug: function() {
-    threads.start(function() {
-      while (STATE.running) {
-        Log.d('Debug', '屏幕文本: ' + UI.getAllText().substring(0, 150));
-        sleep(5000);
-      }
-    });
+    device.vibrate(300);
+
+    // 延迟关闭悬浮窗
+    setTimeout(function() {
+      FloatyUI.close();
+    }, 2000);
   }
 };
 
 // ========== 入口 ==========
-// 自动启动
 Main.start();
 
-// 摇晃停止
+// 音量下键停止
 events.observeKey();
 events.onKeyDown('volume_down', function() {
-  Log.i('Main', '检测到按键，停止脚本');
   Main.stop();
   exit();
 });
