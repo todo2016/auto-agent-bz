@@ -1,0 +1,21 @@
+# AutoJS
+*.iso
+*.bak
+
+# 日志
+*.log
+/logs/
+
+# 截图
+/Pictures/auto-agent-bz/
+/screenshots/
+
+# 临时文件
+*.tmp
+*.swp
+
+# Node.js (如果有)
+node_modules/
+
+# macOS
+.DS_Store
