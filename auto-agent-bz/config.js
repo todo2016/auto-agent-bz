@@ -141,8 +141,8 @@ const USER_CONFIG = {
     // 屏幕宽度
     width: 1080,
 
-    // 屏幕高度
-    height: 1920,
+    // 屏幕高度 (实际: 2400)
+    height: 2400,
 
     // 按钮位置 (格式: [x1, y1, x2, y2])
     buttons: {
