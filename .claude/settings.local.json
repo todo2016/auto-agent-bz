@@ -11,7 +11,20 @@
       "Bash(git commit:*)",
       "Bash(gh auth:*)",
       "Bash(gh repo:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(npm install:*)",
+      "Bash(npm search:*)",
+      "Bash(brew list:*)",
+      "Bash(brew --version)",
+      "Bash(brew install:*)",
+      "Bash(adb version:*)",
+      "Bash(adb devices:*)",
+      "Bash(adb push:*)",
+      "Bash(mkdir -p /Users/weiwang/Desktop/oo/auto-agent-bz/screenshots)",
+      "Bash(adb pull:*)",
+      "Bash(adb shell:*)",
+      "Bash(adb exec-out:*)",
+      "Bash(adb logcat:*)"
     ]
   }
 }
