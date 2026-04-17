@@ -1,23 +1,13 @@
 // auto-agent-bz/main.js
-// 传奇霸主 - 极简稳定版 v1.3.0
-// 只保留核心功能，避免崩溃
+// 传奇霸主 - 自动回收 v2.1
+// 通过WebView注入调用游戏内部函数
 
 'use strict';
-
-// ========== 配置 ==========
-const CONFIG = {
-  mode: 1,
-  combat: { enabled: true, checkInterval: 2000 },
-  antiAfk: { enabled: true },
-  daily: { enabled: true, interval: 30000 }
-};
-
-// ========== 状态 ==========
-let STATE = { running: false, answering: false };
 
 // ========== 悬浮窗 ==========
 let fw = null;
 let logs = [];
+const MAX_LOG = 5;
 
 const Floaty = {
   create() {
@@ -25,16 +15,16 @@ const Floaty = {
       fw = floaty.window(
         <frame bg="#88000000" padding="3">
           <vertical>
-            <text id="t" text="传奇助手 v1.3" textColor="#FFD700" textSize="10" />
+            <text text="自动回收 v2.1" textColor="#FFD700" textSize="10" />
+            <text id="status" text="等待开始..." textColor="#FFF" textSize="8" />
             <text id="l1" text="" textColor="#0F0" textSize="8" />
             <text id="l2" text="" textColor="#0F0" textSize="8" />
             <text id="l3" text="" textColor="#0F0" textSize="8" />
-            <text id="l4" text="" textColor="#0F0" textSize="8" />
           </vertical>
         </frame>
       );
       fw.setPosition(5, 100);
-      this.log("悬浮窗创建成功");
+      this.log("初始化完成");
     } catch (e) {
       toast("悬浮窗失败: " + e);
     }
@@ -42,15 +32,20 @@ const Floaty = {
 
   log(msg) {
     if (!fw) return;
-    msg = String(msg).substring(0, 25);
+    msg = String(msg).substring(0, 35);
     logs.push(msg);
-    if (logs.length > 4) logs.shift();
+    if (logs.length > MAX_LOG) logs.shift();
     try {
-      fw.l1.setText(logs[0] || "");
-      fw.l2.setText(logs[1] || "");
-      fw.l3.setText(logs[2] || "");
-      fw.l4.setText(logs[3] || "");
+      for (let i = 1; i <= MAX_LOG; i++) {
+        let tv = fw['l' + i];
+        if (tv) tv.setText(logs[i - 1] || "");
+      }
     } catch (e) {}
+  },
+
+  setStatus(s) {
+    if (!fw) return;
+    try { fw.status.setText(s); } catch (e) {}
   },
 
   close() {
@@ -61,212 +56,192 @@ const Floaty = {
   }
 };
 
-// ========== 日志 ==========
-const Log = {
-  i(msg) {
-    console.log(msg);
-    Floaty.log(msg);
-  }
-};
+// ========== WebView注入器 ==========
+const Inject = {
+  webView: null,
 
-// ========== UI工具 ==========
-const UI = {
-  // 安全点击文字
-  clickText(str) {
+  findWebView() {
     try {
-      let el = text(str).clickable(true).findOne(2000);
-      if (el) {
-        el.click();
-        Log.i("点击: " + str);
-        return true;
+      let context = context;
+      let activity = context.getActivity();
+      if (!activity) return null;
+
+      let decorView = activity.getWindow().getDecorView();
+      return this.searchWebView(decorView);
+    } catch (e) {
+      return null;
+    }
+  },
+
+  searchWebView(view) {
+    if (!view) return null;
+    try {
+      let clsName = view.class.getName();
+      if (clsName.includes("WebView") || view instanceof android.webkit.WebView) {
+        return view;
       }
-    } catch (e) {
-      Log.i("未找到: " + str);
-    }
-    return false;
-  },
-
-  // 检测文字是否存在
-  hasText(str) {
-    try {
-      return text(str).exists(1000);
-    } catch (e) {
-      return false;
-    }
-  },
-
-  // 检测多个文字（任意一个存在即返回true）
-  hasAny() {
-    let arr = Array.from(arguments);
-    for (let i = 0; i < arr.length; i++) {
-      if (this.hasText(arr[i])) return true;
-    }
-    return false;
-  }
-};
-
-// ========== 反挂机 ==========
-const AntiAfk = {
-  check() {
-    if (!CONFIG.antiAfk.enabled || STATE.answering) return;
-
-    if (UI.hasAny("答题", "验证", "第", "乘", "加")) {
-      STATE.answering = true;
-      Log.i("检测到答题!");
-      this.solve();
-      STATE.answering = false;
-    }
-  },
-
-  solve() {
-    try {
-      // 尝试找输入框
-      let input = className("EditText").findOne(1000);
-      if (input) {
-        // 简单检测数学运算
-        let q = "";
-        try {
-          let qel = textContains("等").findOne(1000);
-          if (qel) q = qel.text();
-        } catch (e) {}
-
-        let ans = "";
-        let m = q.match(/(.)乘(.)等/);
-        if (m) {
-          let a = this.toNum(m[1]);
-          let b = this.toNum(m[2]);
-          ans = String(a * b);
-          Log.i("乘法: " + ans);
-        }
-        m = q.match(/(.)加(.)等/);
-        if (m) {
-          let a = this.toNum(m[1]);
-          let b = this.toNum(m[2]);
-          ans = String(a + b);
-          Log.i("加法: " + ans);
-        }
-
-        if (ans) {
-          input.setText(ans);
-          sleep(200);
+      if (view instanceof android.view.ViewGroup) {
+        for (let i = 0; i < view.getChildCount(); i++) {
+          let result = this.searchWebView(view.getChildAt(i));
+          if (result) return result;
         }
       }
-      UI.clickText("确定");
-      UI.clickText("确认");
-    } catch (e) {
-      Log.i("答题异常");
+    } catch (e) {}
+    return null;
+  },
+
+  // 执行JS并获取结果
+  async eval(js) {
+    return new Promise((resolve) => {
+      try {
+        let wv = this.webView || this.findWebView();
+        if (!wv) {
+          resolve(null);
+          return;
+        }
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+          wv.evaluateJavascript(js, new android.webkit.ValueCallback({
+            onReceiveValue: function(result) {
+              resolve(result);
+            }
+          }));
+        } else {
+          wv.loadUrl("javascript:window._ret=" + js + ";");
+          resolve(null);
+        }
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  },
+
+  // 执行JS不等待结果
+  exec(js) {
+    try {
+      let wv = this.webView || this.findWebView();
+      if (!wv) return;
+
+      if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+        wv.evaluateJavascript(js, null);
+      } else {
+        wv.loadUrl("javascript:" + js);
+      }
+    } catch (e) {}
+  }
+};
+
+// ========== 回收功能 ==========
+const Recycler = {
+  // 打开回收界面
+  async openRecycleUI() {
+    Floaty.log("打开回收界面...");
+    Inject.exec("uim.show(671);");
+    await sleep(500);
+    let hasUI = await Inject.eval("uim.getUI(671) ? true : false");
+    Floaty.log("回收界面: " + (hasUI === "true" ? "已打开" : "未打开"));
+    return hasUI === "true";
+  },
+
+  // 执行回收
+  async doRecycle() {
+    Floaty.log("执行回收...");
+    Inject.exec("if(typeof RecyclePop !== 'undefined') { var rp = uim.getUI(671); if(rp && rp.doRecycle) rp.doRecycle(); }");
+    await sleep(300);
+    Floaty.log("回收完成");
+  },
+
+  // 分解物品
+  // category: 2=类型分解, type: 5=元婴, 7=盾牌, 12=技能书, 13=灵石
+  async decompose(category, type) {
+    Floaty.log("分解类型" + type + "...");
+    Inject.exec("net.DecomposeModel.ins().send1(" + category + ", " + type + ", 0)");
+    await sleep(200);
+  },
+
+  // 自动分解+回收
+  async autoRecycle() {
+    Floaty.setStatus("回收中...");
+
+    // 1. 打开回收界面
+    let opened = await this.openRecycleUI();
+    if (!opened) {
+      Floaty.log("无法打开回收界面");
+      return;
     }
-  },
 
-  toNum(s) {
-    let m = {零:0,一:1,二:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10};
-    if (m[s] !== undefined) return m[s];
-    if (s === "十") return 10;
-    return parseInt(s) || 0;
-  }
-};
+    await sleep(500);
 
-// ========== 战斗 ==========
-const Combat = {
-  check() {
-    return UI.hasAny("自动", "攻击", "战斗中");
-  },
+    // 2. 执行回收
+    await this.doRecycle();
 
-  enable() {
-    if (UI.clickText("自动")) return true;
-    if (UI.clickText("开")) return true;
-    return false;
-  },
+    await sleep(500);
 
-  checkLoot() {
-    return UI.hasAny("拾取", "金币", "获得");
-  },
+    // 3. 分解各类型物品
+    // 元婴
+    await this.decompose(2, 5);
+    // 盾牌
+    await this.decompose(2, 7);
+    // 技能书
+    await this.decompose(2, 12);
+    // 灵石
+    await this.decompose(2, 13);
 
-  pickup() {
-    UI.clickText("拾取");
-    UI.clickText("一键拾取");
-    Log.i("拾取物品");
-  }
-};
+    // 4. 关闭回收界面
+    Inject.exec("uim.close(671);");
 
-// ========== 日常 ==========
-const Daily = {
-  exec() {
-    if (!CONFIG.daily.enabled) return;
-    Log.i("执行日常...");
-    UI.clickText("日常");
-    sleep(500);
-    UI.clickText("领取");
-    sleep(200);
-    UI.clickText("确定");
-    sleep(200);
-    UI.clickText("×");
-    UI.clickText("关闭");
-    Log.i("日常完成");
+    Floaty.setStatus("完成!");
+    Floaty.log("自动回收全部完成");
   }
 };
 
 // ========== 主控 ==========
 const Main = {
-  start() {
-    if (STATE.running) return;
+  running: false,
 
-    // 请求权限
+  init() {
     if (!requestScreenCapture()) {
       toast("需要截图权限!");
-      return;
+      return false;
     }
-
     try { auto(); } catch (e) {}
+    return true;
+  },
+
+  start() {
+    if (this.running) return;
+    if (!this.init()) return;
 
     Floaty.create();
-    STATE.running = true;
+    this.running = true;
 
-    Log.i("助手已启动!");
-    device.vibrate(200);
+    Floaty.log("开始自动回收");
+    Floaty.log("请确保已在游戏中");
 
-    // 主循环
-    threads.start(function() {
-      let counter = 0;
-      while (STATE.running) {
-        try {
-          AntiAfk.check();
-          if (Combat.checkLoot()) Combat.pickup();
-          if (!Combat.check()) Combat.enable();
-
-          // 每30秒执行一次日常
-          counter++;
-          if (counter >= 15) {
-            Daily.exec();
-            counter = 0;
-          }
-        } catch (e) {
-          Log.i("循环异常");
-        }
-        sleep(CONFIG.combat.checkInterval);
-      }
-    });
+    // 延迟执行确保游戏已加载
+    setTimeout(() => {
+      Recycler.autoRecycle().then(() => {
+        Floaty.log("全部完成!");
+        device.vibrate(500);
+        setTimeout(() => {
+          Floaty.close();
+        }, 3000);
+      });
+    }, 1000);
   },
 
   stop() {
-    STATE.running = false;
-    Log.i("已停止");
-    device.vibrate(300);
-    setTimeout(function() { Floaty.close(); }, 1000);
+    this.running = false;
+    Floaty.close();
   }
 };
 
 // ========== 入口 ==========
 Main.start();
 
-// 音量下停止
+// 音量下键停止
 events.observeKey();
 events.onKeyDown("volume_down", function() {
   Main.stop();
   exit();
 });
-
-// 保持运行
-while (STATE.running) {
-  sleep(1000);
-}

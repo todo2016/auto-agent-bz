@@ -24,7 +24,8 @@
       "Bash(adb pull:*)",
       "Bash(adb shell:*)",
       "Bash(adb exec-out:*)",
-      "Bash(adb logcat:*)"
+      "Bash(adb logcat:*)",
+      "Bash(scrcpy)"
     ]
   }
 }
